@@ -25,9 +25,11 @@ def send_report(html_file: str, summary: dict = None):
     - REPORT_RECIPIENT: 收件者 Email（預設同寄件者）
     """
 
-    gmail_user = os.environ.get("GMAIL_USER", "")
-    gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "")
-    recipient = os.environ.get("REPORT_RECIPIENT", gmail_user)
+    gmail_user = os.environ.get("GMAIL_USER", "").strip().replace("\xa0", " ").strip()
+    gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "").strip().replace("\xa0", " ").strip()
+    recipient = os.environ.get("REPORT_RECIPIENT", "").strip().replace("\xa0", " ").strip()
+    if not recipient:
+        recipient = gmail_user
 
     if not gmail_user or not gmail_password:
         print("⚠ 未設定 GMAIL_USER 或 GMAIL_APP_PASSWORD，跳過 Email 發送")
@@ -46,7 +48,9 @@ def send_report(html_file: str, summary: dict = None):
     msg = MIMEMultipart("mixed")
     msg["From"] = gmail_user
     msg["To"] = recipient
-    msg["Subject"] = subject
+    # 用 Header 正確編碼中文 subject
+    from email.header import Header
+    msg["Subject"] = Header(subject, "utf-8")
 
     # 信件正文（簡短摘要）
     total_ads = summary.get("total_ads", 0) if summary else 0

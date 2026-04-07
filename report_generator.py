@@ -36,6 +36,7 @@ def generate_report(ads_json_path: str) -> str:
         if pname not in pages:
             pages[pname] = {
                 "page_id": ad.get("page_id", ""),
+                "page_url": ad.get("page_url", ""),
                 "ads": [],
                 "queries": set(),
             }
@@ -95,30 +96,35 @@ def _build_html(
     page_cards = ""
     for idx, (page_name, page_data) in enumerate(sorted_pages):
         ad_count = len(page_data["ads"])
-        page_id = page_data["page_id"]
+        page_id = page_data.get("page_id", "")
+        page_url = page_data.get("page_url", "")
         queries = ", ".join(page_data["queries"])
         
         # 粉專連結
-        if page_id:
-            page_url = f"https://www.facebook.com/{page_id}"
-            page_link = f'<a href="{page_url}" target="_blank" class="page-link">查看粉專 →</a>'
+        if page_url:
+            page_link = f'<a href="{escape(page_url)}" target="_blank" class="page-link">查看粉專 →</a>'
+        elif page_id:
+            page_link = f'<a href="https://www.facebook.com/{page_id}" target="_blank" class="page-link">查看粉專 →</a>'
         else:
             page_link = ""
 
-        # Ad Library 搜尋連結
-        ad_lib_url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=MY&view_all_page_id={page_id}" if page_id else ""
-        ad_lib_link = f'<a href="{ad_lib_url}" target="_blank" class="adlib-link">在 Ad Library 查看 →</a>' if ad_lib_url else ""
+        # Ad Library 搜尋連結（用粉專名稱搜尋）
+        from urllib.parse import quote as url_quote
+        ad_lib_search = url_quote(page_name)
+        ad_lib_url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=MY&q={ad_lib_search}"
+        ad_lib_link = f'<a href="{ad_lib_url}" target="_blank" class="adlib-link">在 Ad Library 查看 →</a>'
 
         # 該粉專的廣告列表
         ad_items = ""
         for ad in page_data["ads"][:5]:  # 每個粉專最多顯示 5 則
-            body = escape(ad.get("body_text", "")[:200])
+            body = escape((ad.get("ad_text") or ad.get("body_text") or "")[:300])
             title = escape(ad.get("title", ""))
             start = escape(str(ad.get("start_date", "")))
             end = escape(str(ad.get("end_date", "")))
-            link = ad.get("link_url", "")
+            link = ad.get("external_link") or ad.get("link_url") or ""
             cta = escape(ad.get("cta_text", ""))
             platforms = escape(ad.get("platforms", ""))
+            lib_id = ad.get("library_id", "")
 
             date_info = ""
             if start:
@@ -135,6 +141,10 @@ def _build_html(
             if platforms:
                 platform_html = f'<span class="ad-platform">📱 {platforms}</span>'
 
+            lib_id_html = ""
+            if lib_id:
+                lib_id_html = f'<span class="ad-date">🆔 {lib_id}</span>'
+
             ad_items += f"""
             <div class="ad-item">
               {f'<div class="ad-title">{title}</div>' if title else ''}
@@ -142,6 +152,7 @@ def _build_html(
               <div class="ad-meta">
                 {date_info}
                 {platform_html}
+                {lib_id_html}
                 {f'<span class="ad-cta">{cta}</span>' if cta else ''}
                 {link_html}
               </div>
