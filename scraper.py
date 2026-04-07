@@ -1,7 +1,8 @@
 """
-Facebook Ad Library 廣告監控爬蟲 v2
-- 主要策略：HTML DOM 解析（用 page.evaluate 在瀏覽器內跑 JS）
-- 輔助策略：GraphQL 攔截（存原始資料供未來分析）
+Facebook Ad Library 廣告監控爬蟲 v3
+- 精準搜尋：吉隆坡置產說明會相關中文關鍵字
+- 地區限定：台灣（TW）
+- 擷取 Ad Library 廣告連結
 """
 
 import asyncio
@@ -14,27 +15,28 @@ from playwright.async_api import async_playwright
 
 # ===== 搜尋設定 =====
 SEARCH_QUERIES = [
-    "吉隆坡",
-    "Kuala Lumpur property",
-    "KL condo",
-    "Mont Kiara",
-    "Bukit Bintang",
+    "吉隆坡 說明會",
+    "吉隆坡 置產",
+    "吉隆坡 建案",
+    "吉隆坡 投資說明會",
     "馬來西亞 說明會",
-    "馬來西亞 投資說明",
+    "馬來西亞 置產",
+    "馬來西亞 建案",
+    "大馬 說明會",
+    "大馬 置產",
     "大馬 建案",
-    "海外置產 馬來西亞",
+    "海外置產 說明會",
+    "第二家園",
     "MM2H",
-    "Malaysia property investment",
-    "KL new launch condo",
 ]
 
-COUNTRY = "MY"
+COUNTRY = "TW"  # 只搜尋投放到台灣的廣告
 MAX_SCROLL = 5
 SCROLL_DELAY = 3
 
 
-async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
-    """搜尋一個關鍵字，回傳廣告列表和原始 GraphQL"""
+async def scrape_one_query(search_term: str, country: str = "TW") -> dict:
+    """搜尋一個關鍵字，回傳廣告列表"""
     graphql_responses = []
 
     async with async_playwright() as p:
@@ -50,7 +52,7 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
         )
         page = await context.new_page()
 
-        # 攔截 GraphQL 回應（存原始資料供分析）
+        # 攔截 GraphQL（存原始資料供分析）
         async def handle_response(response):
             try:
                 if "graphql" in response.url and response.status == 200:
@@ -88,7 +90,7 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
 
         await asyncio.sleep(4)
 
-        # 關閉可能的彈窗
+        # 關閉彈窗
         for selector in [
             'div[aria-label="Close"]',
             'div[aria-label="關閉"]',
@@ -118,26 +120,18 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
         screenshot_path = os.path.join(screenshot_dir, f"{safe_name}.png")
         await page.screenshot(path=screenshot_path, full_page=False)
 
-        # ===== 在瀏覽器內用 JS 解析廣告卡片 =====
+        # ===== HTML DOM 解析 =====
         ads_raw = await page.evaluate(r"""() => {
             const results = [];
 
-            // 策略：找出頁面上所有「廣告卡片」
-            // Ad Library 的每張卡片包含：
-            //   - 粉專名稱（通常是一個連結）
-            //   - "Started running on ..." 日期
-            //   - "Platforms: ..." 平台
-            //   - 廣告文案內容
-            //   - Library ID
-
-            // 找所有包含 "Started running" 的文字節點的最近容器
+            // 找所有包含 "Started running" 的文字節點
             const walker = document.createTreeWalker(
                 document.body,
                 NodeFilter.SHOW_TEXT,
-                { acceptNode: n => 
-                    (n.textContent.includes('Started running') || 
+                { acceptNode: n =>
+                    (n.textContent.includes('Started running') ||
                      n.textContent.includes('開始投放'))
-                    ? NodeFilter.FILTER_ACCEPT 
+                    ? NodeFilter.FILTER_ACCEPT
                     : NodeFilter.FILTER_REJECT
                 }
             );
@@ -147,18 +141,14 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                 dateNodes.push(walker.currentNode);
             }
 
-            // 對每個日期節點，往上找到廣告卡片的容器
             const processedContainers = new Set();
-            
+
             for (const dateNode of dateNodes) {
-                // 往上找一個合理大小的容器（廣告卡片）
                 let container = dateNode.parentElement;
                 let attempts = 0;
                 while (container && attempts < 10) {
                     const text = container.innerText || '';
-                    // 廣告卡片通常在 200~5000 字之間
                     if (text.length > 100 && text.length < 8000) {
-                        // 確認這個容器有邊界（padding/margin/border）
                         const style = window.getComputedStyle(container);
                         const hasBoundary = (
                             parseInt(style.padding) > 0 ||
@@ -166,13 +156,8 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                             style.borderWidth !== '0px' ||
                             style.boxShadow !== 'none'
                         );
-                        
-                        // 或者包含多個子區塊
                         const childDivs = container.querySelectorAll(':scope > div');
-                        
-                        if (hasBoundary || childDivs.length >= 2) {
-                            break;
-                        }
+                        if (hasBoundary || childDivs.length >= 2) break;
                     }
                     container = container.parentElement;
                     attempts++;
@@ -190,12 +175,12 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                     ad_text: '',
                     start_date: '',
                     library_id: '',
+                    ad_library_url: '',
                     platforms: '',
                     external_link: '',
                 };
 
-                // 1. 提取粉專名稱和連結
-                //    通常是卡片內第一個 <a> 連結，指向 facebook.com 的粉專
+                // 1. 粉專名稱和連結
                 const allLinks = container.querySelectorAll('a[href]');
                 for (const link of allLinks) {
                     const href = link.href || '';
@@ -210,7 +195,6 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                     }
                 }
 
-                // 備用：取第一行有意義的文字作為粉專名稱
                 if (!ad.page_name) {
                     for (const line of lines) {
                         if (line.length > 2 && line.length < 80 &&
@@ -221,7 +205,7 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                     }
                 }
 
-                // 2. 提取日期
+                // 2. 日期
                 for (const line of lines) {
                     const enMatch = line.match(/Started running on\s+(.+)/i);
                     if (enMatch) { ad.start_date = enMatch[1].trim(); break; }
@@ -229,13 +213,30 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                     if (zhMatch) { ad.start_date = zhMatch[1].trim(); break; }
                 }
 
-                // 3. 提取 Library ID
+                // 3. Library ID + Ad Library 連結
                 for (const line of lines) {
                     const idMatch = line.match(/(?:Library ID|廣告檔案庫編號)[：:\s]*(\d+)/i);
-                    if (idMatch) { ad.library_id = idMatch[1]; break; }
+                    if (idMatch) {
+                        ad.library_id = idMatch[1];
+                        ad.ad_library_url = 'https://www.facebook.com/ads/library/?id=' + idMatch[1];
+                        break;
+                    }
                 }
 
-                // 4. 提取平台
+                // 也從連結中找 Ad Library 連結
+                if (!ad.ad_library_url) {
+                    for (const link of allLinks) {
+                        const href = link.href || '';
+                        if (href.includes('/ads/library/') && href.includes('id=')) {
+                            ad.ad_library_url = href;
+                            const m = href.match(/id=(\d+)/);
+                            if (m) ad.library_id = m[1];
+                            break;
+                        }
+                    }
+                }
+
+                // 4. 平台
                 for (const line of lines) {
                     if (line.match(/^\s*(Facebook|Instagram|Messenger|Audience Network)/)) {
                         const ps = [];
@@ -249,13 +250,14 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                     }
                 }
 
-                // 5. 提取廣告文案
+                // 5. 廣告文案
                 const skipPatterns = [
                     /^Started running/i, /^開始投放/, /^Library ID/i, /^廣告檔案庫/,
                     /^Active$/i, /^Inactive$/i, /^See summary/i, /^查看摘要/,
                     /^About this ad/i, /^關於此廣告/, /^See ad details/i,
                     /^Disclaimer/i, /^Impressions/i, /^See All/i, /^Ad $/i,
                     /^Platforms?$/i, /^Facebook$/i, /^Instagram$/i,
+                    /^Multiple/i, /^Sponsored/i,
                 ];
                 const bodyLines = lines.filter(line => {
                     if (line === ad.page_name) return false;
@@ -265,7 +267,7 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                 });
                 ad.ad_text = bodyLines.slice(0, 6).join(' ').substring(0, 500);
 
-                // 6. 提取外部連結
+                // 6. 外部連結
                 for (const link of allLinks) {
                     const href = link.href || '';
                     if (href && !href.includes('facebook.com') && !href.includes('instagram.com') &&
@@ -280,40 +282,32 @@ async def scrape_one_query(search_term: str, country: str = "MY") -> dict:
                 }
             }
 
-            // 如果上面的方法沒找到足夠的卡片，嘗試備用方案
+            // 備用方案
             if (results.length === 0) {
-                // 備用：找所有 role="article" 或特定 class 的卡片
                 const fallbackCards = document.querySelectorAll(
                     'div._7jvw, div[role="article"], div[class*="xrvj5dj"]'
                 );
-                
                 for (const card of fallbackCards) {
                     const text = card.innerText || '';
                     if (text.length < 30) continue;
-                    
                     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
                     if (lines.length < 2) continue;
-
                     const ad = {
                         page_name: lines[0] || '',
                         page_url: '',
                         ad_text: lines.slice(1, 5).join(' ').substring(0, 500),
                         start_date: '',
                         library_id: '',
+                        ad_library_url: '',
                         platforms: '',
                         external_link: '',
                         source: 'fallback',
                     };
-
-                    // 嘗試提取日期
                     for (const line of lines) {
                         const m = line.match(/Started running on\s+(.+)/i);
                         if (m) { ad.start_date = m[1].trim(); break; }
                     }
-
-                    if (ad.page_name && ad.page_name.length < 100) {
-                        results.push(ad);
-                    }
+                    if (ad.page_name && ad.page_name.length < 100) results.push(ad);
                 }
             }
 
@@ -336,7 +330,8 @@ async def main():
     """主流程"""
     MYT = timezone(timedelta(hours=8))
     print("=" * 60)
-    print(f"Facebook Ad Library 廣告監控 v2")
+    print(f"Facebook Ad Library 廣告監控 v3")
+    print(f"目標：吉隆坡置產說明會 · 投放地區：台灣")
     print(f"執行時間: {datetime.now(MYT).strftime('%Y-%m-%d %H:%M:%S')} (MYT)")
     print("=" * 60)
 
@@ -363,7 +358,11 @@ async def main():
     unique_ads = []
     seen = set()
     for ad in all_ads:
-        key = f"{ad.get('page_name', '')}|{ad.get('ad_text', '')[:80]}"
+        # 用 library_id 去重最精準，否則用 page_name + 文案前 80 字
+        if ad.get("library_id"):
+            key = ad["library_id"]
+        else:
+            key = f"{ad.get('page_name', '')}|{ad.get('ad_text', '')[:80]}"
         if key in seen:
             continue
         seen.add(key)
@@ -392,7 +391,6 @@ async def main():
     raw_file = os.path.join(output_dir, f"raw_{now_str}.json")
     with open(raw_file, "w", encoding="utf-8") as f:
         json.dump(all_graphql, f, ensure_ascii=False, indent=2)
-    print(f"原始 GraphQL 已儲存: {raw_file}")
 
     return ads_file
 

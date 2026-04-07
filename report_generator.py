@@ -1,6 +1,7 @@
 """
-HTML 報告生成器
-將爬蟲收集到的廣告資料生成一份精美的 HTML 報告
+HTML 報告生成器 v3
+- 清爽明亮風格
+- 廣告連結可直接點擊
 """
 
 import json
@@ -8,13 +9,12 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 from html import escape
+from urllib.parse import quote as url_quote
 
 MYT = timezone(timedelta(hours=8))
 
 
 def generate_report(ads_json_path: str) -> str:
-    """讀取 JSON 資料並生成 HTML 報告"""
-
     with open(ads_json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -23,7 +23,6 @@ def generate_report(ads_json_path: str) -> str:
     search_stats = data.get("search_stats", {})
     total_ads = data.get("total_ads", len(ads))
 
-    # 整理報告時間
     now = datetime.now(MYT)
     report_date = now.strftime("%Y年%m月%d日")
     report_time = now.strftime("%H:%M")
@@ -35,7 +34,6 @@ def generate_report(ads_json_path: str) -> str:
         pname = ad.get("page_name", "未知粉專") or "未知粉專"
         if pname not in pages:
             pages[pname] = {
-                "page_id": ad.get("page_id", ""),
                 "page_url": ad.get("page_url", ""),
                 "ads": [],
                 "queries": set(),
@@ -43,11 +41,7 @@ def generate_report(ads_json_path: str) -> str:
         pages[pname]["ads"].append(ad)
         pages[pname]["queries"].add(ad.get("search_query", ""))
 
-    # 按廣告數量排序（多的在前）
     sorted_pages = sorted(pages.items(), key=lambda x: len(x[1]["ads"]), reverse=True)
-
-    # 找出本週新出現的粉專（如果有歷史資料的話）
-    # 這裡先留接口，之後可以比對上週的資料
 
     html = _build_html(
         report_date=report_date,
@@ -57,10 +51,8 @@ def generate_report(ads_json_path: str) -> str:
         total_pages=len(pages),
         search_stats=search_stats,
         sorted_pages=sorted_pages,
-        ads=ads,
     )
 
-    # 儲存 HTML
     output_dir = os.path.dirname(ads_json_path)
     html_file = os.path.join(output_dir, f"report_{scan_time}.html")
     with open(html_file, "w", encoding="utf-8") as f:
@@ -73,14 +65,14 @@ def generate_report(ads_json_path: str) -> str:
 def _build_html(
     report_date, report_time, week_label,
     total_ads, total_pages,
-    search_stats, sorted_pages, ads,
+    search_stats, sorted_pages,
 ) -> str:
-    """組裝完整的 HTML 報告"""
 
-    # 搜尋統計表格行
+    # 搜尋統計
     stats_rows = ""
+    max_count = max(search_stats.values()) if search_stats else 1
     for query, count in search_stats.items():
-        bar_width = min(count * 8, 100) if count > 0 else 2
+        bar_width = int((count / max(max_count, 1)) * 100) if count > 0 else 2
         stats_rows += f"""
         <tr>
           <td class="query-name">{escape(query)}</td>
@@ -96,80 +88,69 @@ def _build_html(
     page_cards = ""
     for idx, (page_name, page_data) in enumerate(sorted_pages):
         ad_count = len(page_data["ads"])
-        page_id = page_data.get("page_id", "")
         page_url = page_data.get("page_url", "")
         queries = ", ".join(page_data["queries"])
-        
+
         # 粉專連結
+        page_link = ""
         if page_url:
-            page_link = f'<a href="{escape(page_url)}" target="_blank" class="page-link">查看粉專 →</a>'
-        elif page_id:
-            page_link = f'<a href="https://www.facebook.com/{page_id}" target="_blank" class="page-link">查看粉專 →</a>'
-        else:
-            page_link = ""
+            page_link = f'<a href="{escape(page_url)}" target="_blank" class="btn btn-page">查看粉專</a>'
 
-        # Ad Library 搜尋連結（用粉專名稱搜尋）
-        from urllib.parse import quote as url_quote
-        ad_lib_search = url_quote(page_name)
-        ad_lib_url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=MY&q={ad_lib_search}"
-        ad_lib_link = f'<a href="{ad_lib_url}" target="_blank" class="adlib-link">在 Ad Library 查看 →</a>'
+        # Ad Library 搜尋連結
+        ad_lib_url = f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=TW&q={url_quote(page_name)}"
+        ad_lib_link = f'<a href="{ad_lib_url}" target="_blank" class="btn btn-adlib">Ad Library</a>'
 
-        # 該粉專的廣告列表
+        # 廣告列表
         ad_items = ""
-        for ad in page_data["ads"][:5]:  # 每個粉專最多顯示 5 則
-            body = escape((ad.get("ad_text") or ad.get("body_text") or "")[:300])
-            title = escape(ad.get("title", ""))
+        for ad in page_data["ads"][:8]:
+            body = escape((ad.get("ad_text") or "")[:300])
             start = escape(str(ad.get("start_date", "")))
-            end = escape(str(ad.get("end_date", "")))
-            link = ad.get("external_link") or ad.get("link_url") or ""
-            cta = escape(ad.get("cta_text", ""))
             platforms = escape(ad.get("platforms", ""))
             lib_id = ad.get("library_id", "")
+            ad_lib_url_single = ad.get("ad_library_url", "")
+            ext_link = ad.get("external_link", "")
 
-            date_info = ""
-            if start:
-                date_info = f'<span class="ad-date">📅 {start}'
-                if end:
-                    date_info += f' ~ {end}'
-                date_info += '</span>'
+            # 日期
+            date_html = f'<span class="meta-item">📅 {start}</span>' if start else ""
 
-            link_html = ""
-            if link:
-                link_html = f'<a href="{escape(link)}" target="_blank" class="ad-ext-link">外部連結 ↗</a>'
+            # 平台
+            platform_html = f'<span class="meta-item">📱 {platforms}</span>' if platforms else ""
 
-            platform_html = ""
-            if platforms:
-                platform_html = f'<span class="ad-platform">📱 {platforms}</span>'
+            # Ad Library 連結（最重要的可點擊連結）
+            ad_link_html = ""
+            if ad_lib_url_single:
+                ad_link_html = f'<a href="{escape(ad_lib_url_single)}" target="_blank" class="ad-link">🔗 查看廣告</a>'
+            elif lib_id:
+                ad_link_html = f'<a href="https://www.facebook.com/ads/library/?id={lib_id}" target="_blank" class="ad-link">🔗 查看廣告</a>'
 
-            lib_id_html = ""
-            if lib_id:
-                lib_id_html = f'<span class="ad-date">🆔 {lib_id}</span>'
+            # 外部連結
+            ext_html = ""
+            if ext_link:
+                ext_html = f'<a href="{escape(ext_link)}" target="_blank" class="ext-link">↗ 外部連結</a>'
 
             ad_items += f"""
             <div class="ad-item">
-              {f'<div class="ad-title">{title}</div>' if title else ''}
-              <div class="ad-body">{body if body else '<em>（無文案內容）</em>'}</div>
+              <div class="ad-body">{body if body else '<em class="empty">（無文案內容）</em>'}</div>
               <div class="ad-meta">
-                {date_info}
+                {date_html}
                 {platform_html}
-                {lib_id_html}
-                {f'<span class="ad-cta">{cta}</span>' if cta else ''}
-                {link_html}
+                {ad_link_html}
+                {ext_html}
               </div>
             </div>"""
 
         more_note = ""
-        if ad_count > 5:
-            more_note = f'<div class="more-note">⋯ 還有 {ad_count - 5} 則廣告，請至 Ad Library 查看完整列表</div>'
+        if ad_count > 8:
+            more_note = f'<div class="more-note">還有 {ad_count - 8} 則廣告，請至 Ad Library 查看</div>'
 
         page_cards += f"""
-        <div class="page-card" style="--delay: {idx * 0.05}s">
+        <div class="page-card">
           <div class="page-header">
             <div class="page-info">
               <h3 class="page-name">{escape(page_name)}</h3>
               <div class="page-meta">
-                <span class="ad-count-badge">{ad_count} 則廣告</span>
-                <span class="query-tags">🔍 {escape(queries)}</span>
+                <span class="badge">{ad_count} 則廣告</span>
+                <span class="query-tag">{escape(queries)}</span>
               </div>
             </div>
             <div class="page-actions">
@@ -183,14 +164,12 @@ def _build_html(
           </div>
         </div>"""
 
-    # 如果沒有找到任何廣告
     if not sorted_pages:
         page_cards = """
         <div class="empty-state">
           <div class="empty-icon">🔍</div>
-          <h3>本週未偵測到新廣告</h3>
-          <p>可能原因：Meta 反爬蟲機制觸發、關鍵字需要調整、或確實沒有新廣告上線。</p>
-          <p>建議檢查 screenshots 資料夾中的截圖確認頁面是否正常載入。</p>
+          <h3>本週未偵測到相關廣告</h3>
+          <p>可能沒有針對台灣投放的吉隆坡置產說明會廣告，或需要調整關鍵字。</p>
         </div>"""
 
     return f"""<!DOCTYPE html>
@@ -200,333 +179,281 @@ def _build_html(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CCPS 廣告監控週報 — {report_date}</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700&display=swap');
 
   :root {{
-    --bg-primary: #0a0f1c;
-    --bg-card: #111827;
-    --bg-card-hover: #1a2332;
-    --bg-inner: #0d1422;
-    --accent: #3b82f6;
-    --accent-glow: rgba(59, 130, 246, 0.15);
-    --accent-bright: #60a5fa;
-    --text-primary: #e8edf5;
-    --text-secondary: #8b95a8;
-    --text-muted: #4b5563;
-    --border: #1e293b;
-    --border-accent: #2563eb;
-    --success: #10b981;
-    --warning: #f59e0b;
-    --danger: #ef4444;
-    --gradient-hero: linear-gradient(135deg, #0a0f1c 0%, #111d3a 50%, #0f172a 100%);
+    --bg: #f7f8fc;
+    --bg-white: #ffffff;
+    --accent: #2563eb;
+    --accent-light: #dbeafe;
+    --accent-dark: #1d4ed8;
+    --green: #059669;
+    --green-light: #d1fae5;
+    --orange: #d97706;
+    --orange-light: #fef3c7;
+    --text: #1e293b;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --border: #e2e8f0;
+    --border-light: #f1f5f9;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.04);
+    --radius: 10px;
   }}
 
-  * {{
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }}
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
   body {{
-    font-family: 'Noto Sans TC', -apple-system, sans-serif;
-    background: var(--bg-primary);
-    color: var(--text-primary);
+    font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
     line-height: 1.7;
-    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
   }}
 
-  /* ===== HERO ===== */
-  .hero {{
-    background: var(--gradient-hero);
-    padding: 60px 40px 50px;
-    position: relative;
-    overflow: hidden;
+  /* ===== HEADER ===== */
+  .header {{
+    background: var(--bg-white);
     border-bottom: 1px solid var(--border);
+    padding: 36px 40px 32px;
   }}
 
-  .hero::before {{
-    content: '';
-    position: absolute;
-    top: -50%;
-    right: -20%;
-    width: 600px;
-    height: 600px;
-    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
-    pointer-events: none;
-  }}
-
-  .hero-content {{
-    max-width: 1100px;
+  .header-inner {{
+    max-width: 960px;
     margin: 0 auto;
-    position: relative;
-    z-index: 1;
   }}
 
-  .hero-label {{
+  .header-label {{
     display: inline-block;
-    background: rgba(59, 130, 246, 0.12);
-    border: 1px solid rgba(59, 130, 246, 0.25);
-    color: var(--accent-bright);
-    padding: 6px 16px;
-    border-radius: 20px;
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 4px 12px;
+    border-radius: 6px;
     font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
-    margin-bottom: 20px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-bottom: 14px;
   }}
 
-  .hero h1 {{
-    font-size: 36px;
-    font-weight: 900;
-    letter-spacing: -0.5px;
-    margin-bottom: 10px;
-    background: linear-gradient(135deg, #e8edf5 0%, #93a3b8 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+  .header h1 {{
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 6px;
   }}
 
-  .hero-date {{
-    font-size: 18px;
+  .header-date {{
+    font-size: 15px;
     color: var(--text-secondary);
-    font-weight: 300;
+    font-weight: 400;
   }}
 
-  /* ===== STATS GRID ===== */
-  .stats-grid {{
+  /* ===== STATS ===== */
+  .stats {{
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px;
-    max-width: 1100px;
-    margin: -30px auto 40px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    max-width: 960px;
+    margin: 24px auto;
     padding: 0 40px;
-    position: relative;
-    z-index: 2;
   }}
 
-  .stat-card {{
-    background: var(--bg-card);
+  .stat {{
+    background: var(--bg-white);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px;
+    border-radius: var(--radius);
+    padding: 20px;
     text-align: center;
-    transition: border-color 0.3s;
-  }}
-
-  .stat-card:hover {{
-    border-color: var(--border-accent);
+    box-shadow: var(--shadow-sm);
   }}
 
   .stat-value {{
-    font-size: 36px;
-    font-weight: 900;
-    color: var(--accent-bright);
-    line-height: 1;
-    margin-bottom: 6px;
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.2;
   }}
 
   .stat-label {{
     font-size: 13px;
     color: var(--text-secondary);
-    font-weight: 400;
+    margin-top: 4px;
   }}
 
-  /* ===== MAIN CONTENT ===== */
+  /* ===== MAIN ===== */
   .main {{
-    max-width: 1100px;
+    max-width: 960px;
     margin: 0 auto;
     padding: 0 40px 60px;
   }}
 
   .section {{
-    margin-bottom: 48px;
+    margin-top: 32px;
   }}
 
   .section-title {{
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border-light);
   }}
 
-  .section-title .icon {{
-    font-size: 22px;
-  }}
-
-  /* ===== SEARCH STATS TABLE ===== */
+  /* ===== STATS TABLE ===== */
   .stats-table {{
     width: 100%;
     border-collapse: collapse;
-    background: var(--bg-card);
-    border-radius: 12px;
+    background: var(--bg-white);
+    border-radius: var(--radius);
     overflow: hidden;
     border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
   }}
 
-  .stats-table tr {{
-    border-bottom: 1px solid var(--border);
-  }}
-
-  .stats-table tr:last-child {{
-    border-bottom: none;
-  }}
-
-  .stats-table td {{
-    padding: 14px 20px;
-  }}
+  .stats-table tr {{ border-bottom: 1px solid var(--border-light); }}
+  .stats-table tr:last-child {{ border-bottom: none; }}
+  .stats-table td {{ padding: 12px 18px; }}
 
   .query-name {{
-    color: var(--text-primary);
+    color: var(--text);
     font-size: 14px;
-    font-weight: 400;
     width: 40%;
-  }}
-
-  .query-count {{
-    width: 60%;
   }}
 
   .bar-container {{
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }}
 
   .bar {{
-    height: 6px;
-    background: linear-gradient(90deg, var(--accent), var(--accent-bright));
-    border-radius: 3px;
+    height: 8px;
+    background: linear-gradient(90deg, #60a5fa, var(--accent));
+    border-radius: 4px;
     min-width: 4px;
-    transition: width 0.5s ease;
   }}
 
   .bar-label {{
     font-size: 14px;
-    color: var(--text-secondary);
-    font-weight: 500;
-    min-width: 30px;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 28px;
   }}
 
   /* ===== PAGE CARDS ===== */
   .page-card {{
-    background: var(--bg-card);
+    background: var(--bg-white);
     border: 1px solid var(--border);
-    border-radius: 14px;
-    margin-bottom: 20px;
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    box-shadow: var(--shadow-sm);
     overflow: hidden;
-    transition: border-color 0.3s, box-shadow 0.3s;
+    transition: box-shadow 0.2s;
   }}
 
   .page-card:hover {{
-    border-color: var(--border-accent);
-    box-shadow: 0 4px 24px rgba(59, 130, 246, 0.08);
+    box-shadow: var(--shadow-md);
   }}
 
   .page-header {{
-    padding: 24px 28px 20px;
+    padding: 20px 24px 16px;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 20px;
+    gap: 16px;
     flex-wrap: wrap;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-light);
   }}
 
   .page-name {{
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
   }}
 
   .page-meta {{
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
   }}
 
-  .ad-count-badge {{
-    background: rgba(59, 130, 246, 0.12);
-    color: var(--accent-bright);
-    padding: 3px 12px;
+  .badge {{
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 2px 10px;
     border-radius: 12px;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
   }}
 
-  .query-tags {{
+  .query-tag {{
     font-size: 12px;
     color: var(--text-muted);
   }}
 
   .page-actions {{
     display: flex;
-    gap: 10px;
+    gap: 8px;
     flex-shrink: 0;
   }}
 
-  .page-link, .adlib-link {{
+  .btn {{
     display: inline-block;
     padding: 6px 14px;
-    border-radius: 8px;
+    border-radius: 7px;
     font-size: 12px;
     font-weight: 500;
     text-decoration: none;
-    transition: all 0.2s;
+    transition: all 0.15s;
   }}
 
-  .page-link {{
-    background: rgba(59, 130, 246, 0.1);
-    color: var(--accent-bright);
-    border: 1px solid rgba(59, 130, 246, 0.2);
+  .btn-page {{
+    background: var(--accent-light);
+    color: var(--accent);
   }}
 
-  .page-link:hover {{
-    background: rgba(59, 130, 246, 0.2);
+  .btn-page:hover {{
+    background: var(--accent);
+    color: white;
   }}
 
-  .adlib-link {{
-    background: rgba(16, 185, 129, 0.1);
-    color: var(--success);
-    border: 1px solid rgba(16, 185, 129, 0.2);
+  .btn-adlib {{
+    background: var(--green-light);
+    color: var(--green);
   }}
 
-  .adlib-link:hover {{
-    background: rgba(16, 185, 129, 0.2);
+  .btn-adlib:hover {{
+    background: var(--green);
+    color: white;
   }}
 
   /* ===== AD ITEMS ===== */
   .ad-list {{
-    padding: 8px 28px 20px;
+    padding: 6px 24px 18px;
   }}
 
   .ad-item {{
-    padding: 16px 0;
-    border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border-light);
   }}
 
   .ad-item:last-child {{
     border-bottom: none;
   }}
 
-  .ad-title {{
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 6px;
-  }}
-
   .ad-body {{
     font-size: 14px;
     color: var(--text-secondary);
     line-height: 1.7;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
+  }}
+
+  .ad-body .empty {{
+    color: var(--text-muted);
   }}
 
   .ad-meta {{
@@ -536,31 +463,39 @@ def _build_html(
     flex-wrap: wrap;
   }}
 
-  .ad-date {{
+  .meta-item {{
     font-size: 12px;
     color: var(--text-muted);
   }}
 
-  .ad-platform {{
+  .ad-link {{
+    display: inline-block;
     font-size: 12px;
-    color: var(--text-muted);
-  }}
-
-  .ad-cta {{
-    font-size: 11px;
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--warning);
-    padding: 2px 10px;
-    border-radius: 8px;
-  }}
-
-  .ad-ext-link {{
-    font-size: 12px;
-    color: var(--accent-bright);
+    font-weight: 600;
+    color: var(--accent);
     text-decoration: none;
+    padding: 2px 10px;
+    border-radius: 5px;
+    background: var(--accent-light);
+    transition: all 0.15s;
   }}
 
-  .ad-ext-link:hover {{
+  .ad-link:hover {{
+    background: var(--accent);
+    color: white;
+  }}
+
+  .ext-link {{
+    font-size: 12px;
+    color: var(--orange);
+    text-decoration: none;
+    padding: 2px 10px;
+    border-radius: 5px;
+    background: var(--orange-light);
+    font-weight: 500;
+  }}
+
+  .ext-link:hover {{
     text-decoration: underline;
   }}
 
@@ -568,138 +503,93 @@ def _build_html(
     text-align: center;
     color: var(--text-muted);
     font-size: 13px;
-    padding: 16px 0 4px;
+    padding: 12px 0 2px;
   }}
 
   /* ===== EMPTY STATE ===== */
   .empty-state {{
     text-align: center;
-    padding: 80px 40px;
-    background: var(--bg-card);
+    padding: 60px 40px;
+    background: var(--bg-white);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--radius);
   }}
 
-  .empty-icon {{
-    font-size: 48px;
-    margin-bottom: 16px;
-  }}
-
-  .empty-state h3 {{
-    font-size: 20px;
-    margin-bottom: 12px;
-    color: var(--text-primary);
-  }}
-
-  .empty-state p {{
-    color: var(--text-secondary);
-    font-size: 14px;
-    margin-bottom: 8px;
-  }}
+  .empty-icon {{ font-size: 40px; margin-bottom: 12px; }}
+  .empty-state h3 {{ font-size: 18px; margin-bottom: 8px; }}
+  .empty-state p {{ color: var(--text-secondary); font-size: 14px; }}
 
   /* ===== FOOTER ===== */
   .footer {{
-    max-width: 1100px;
+    max-width: 960px;
     margin: 0 auto;
-    padding: 30px 40px;
-    border-top: 1px solid var(--border);
+    padding: 24px 40px;
     text-align: center;
     color: var(--text-muted);
     font-size: 12px;
+    border-top: 1px solid var(--border-light);
   }}
 
   /* ===== RESPONSIVE ===== */
   @media (max-width: 768px) {{
-    .hero {{
-      padding: 40px 20px 36px;
-    }}
-
-    .hero h1 {{
-      font-size: 26px;
-    }}
-
-    .stats-grid {{
-      padding: 0 20px;
-      grid-template-columns: repeat(2, 1fr);
-    }}
-
-    .main {{
-      padding: 0 20px 40px;
-    }}
-
-    .page-header {{
-      padding: 18px 20px 16px;
-    }}
-
-    .ad-list {{
-      padding: 8px 20px 16px;
-    }}
-
-    .page-actions {{
-      flex-direction: column;
-    }}
+    .header {{ padding: 28px 20px 24px; }}
+    .header h1 {{ font-size: 22px; }}
+    .stats {{ padding: 0 20px; grid-template-columns: repeat(2, 1fr); }}
+    .main {{ padding: 0 20px 40px; }}
+    .page-header {{ padding: 16px 18px 14px; }}
+    .ad-list {{ padding: 6px 18px 14px; }}
+    .page-actions {{ width: 100%; }}
+    .btn {{ flex: 1; text-align: center; }}
   }}
 
-  /* ===== PRINT ===== */
   @media print {{
-    body {{ background: #fff; color: #111; }}
-    .hero {{ background: #f8f9fa; border-bottom: 2px solid #e5e7eb; }}
-    .hero h1 {{ -webkit-text-fill-color: #111; }}
-    .stat-card, .page-card, .stats-table {{ border: 1px solid #e5e7eb; background: #fff; }}
-    .stat-value {{ color: #2563eb; }}
-    .ad-body {{ color: #555; }}
-    a {{ color: #2563eb; }}
+    body {{ background: #fff; }}
+    .page-card {{ box-shadow: none; border: 1px solid #ddd; }}
+    .stat {{ box-shadow: none; }}
   }}
 </style>
 </head>
 <body>
 
-  <!-- HERO -->
-  <header class="hero">
-    <div class="hero-content">
-      <div class="hero-label">CCPS Competitive Intelligence</div>
-      <h1>馬來西亞房產廣告監控週報</h1>
-      <div class="hero-date">{report_date}（週{week_label}）{report_time} 生成</div>
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-label">CCPS 競品情報</div>
+      <h1>吉隆坡置產說明會 · 廣告監控週報</h1>
+      <div class="header-date">{report_date}（週{week_label}）{report_time} 掃描 · 投放地區：台灣</div>
     </div>
   </header>
 
-  <!-- STATS -->
-  <div class="stats-grid">
-    <div class="stat-card">
+  <div class="stats">
+    <div class="stat">
       <div class="stat-value">{total_ads}</div>
-      <div class="stat-label">偵測到的廣告數</div>
+      <div class="stat-label">偵測到的廣告</div>
     </div>
-    <div class="stat-card">
+    <div class="stat">
       <div class="stat-value">{total_pages}</div>
       <div class="stat-label">投放中的粉專</div>
     </div>
-    <div class="stat-card">
+    <div class="stat">
       <div class="stat-value">{len(search_stats)}</div>
-      <div class="stat-label">搜尋關鍵字數</div>
+      <div class="stat-label">搜尋關鍵字</div>
     </div>
   </div>
 
-  <!-- MAIN -->
   <main class="main">
-
-    <!-- 搜尋統計 -->
     <section class="section">
-      <h2 class="section-title"><span class="icon">📊</span> 各關鍵字命中數</h2>
+      <h2 class="section-title">📊 各關鍵字命中數</h2>
       <table class="stats-table">
         {stats_rows}
       </table>
     </section>
 
-    <!-- 粉專與廣告明細 -->
     <section class="section">
-      <h2 class="section-title"><span class="icon">📋</span> 投放中的粉專與廣告</h2>
+      <h2 class="section-title">📋 粉專與廣告明細</h2>
       {page_cards}
     </section>
-
   </main>
 
   <footer class="footer">
-    CCPS 廣告監控系統 · 家慶佳業 · 自動生成報告 · 資料來源：Meta Ad Library
+    CCPS 廣告監控系統 · 家慶佳業 · 資料來源：Meta Ad Library · 投放地區：台灣
   </footer>
 
 </body>
