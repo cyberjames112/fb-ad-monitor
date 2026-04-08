@@ -60,11 +60,11 @@ def send_report(html_file: str, summary: dict = None):
 CCPS 廣告監控週報 — {date_str}
 
 本週掃描結果：
-- 偵測到 {total_ads} 則廣告
-- 來自 {total_pages} 個粉專
+- FB 廣告：{total_ads} 則（{total_pages} 個粉專）
+- YouTube 新影片：{summary.get('total_videos', 0)} 部
 
 完整報告請查看附件的 HTML 檔案。
-（用瀏覽器開啟附件即可檢視精美報告）
+（用瀏覽器開啟附件即可檢視，含 FB 廣告 / YouTube 影片雙分頁）
 
 ---
 此郵件由 CCPS 廣告監控系統自動發送
