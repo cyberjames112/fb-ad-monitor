@@ -607,13 +607,22 @@ export default function App() {
             </button>
 
             {isRunning && (
-              <div style={{ marginTop: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text2)", marginBottom: 6 }}>
-                  <span>{progressText}</span>
-                  <span>{Math.round(progress)}%</span>
+              <div style={{ marginTop: 24, display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "32px 20px", background: "var(--card)", borderRadius: 12, border: "1px solid var(--border)" }}>
+                <div style={{ position: "relative", width: 120, height: 120 }}>
+                  <svg width="120" height="120" viewBox="0 0 120 120" style={{ transform: "rotate(-90deg)" }}>
+                    <circle cx="60" cy="60" r="52" fill="none" stroke="var(--border)" strokeWidth="8" />
+                    <circle cx="60" cy="60" r="52" fill="none" stroke="var(--accent)" strokeWidth="8"
+                      strokeDasharray={2 * Math.PI * 52}
+                      strokeDashoffset={2 * Math.PI * 52 * (1 - progress / 100)}
+                      strokeLinecap="round"
+                      style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+                  </svg>
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 700, color: "var(--accent)" }}>
+                    {Math.round(progress)}%
+                  </div>
                 </div>
-                <div style={{ height: 6, borderRadius: 3, background: "var(--border)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", borderRadius: 3, background: "var(--accent)", width: `${progress}%`, transition: "width 0.4s ease" }} />
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text2)", textAlign: "center" }}>
+                  {progressText}
                 </div>
               </div>
             )}
